@@ -1,0 +1,32 @@
+size=2009 sha=a92e2a1427c9d02a mtime=1792237005638666800
+【外部改动提示】本轮开始时为 2094B/CRLF/sha 807dc27b…，19:36:45 被本流程之外的写入者改成 LF+制表符格式并多出「蓝波 桃花没酒」一行；封存脚本只动 sites.json / recent_10_cache.json / archived_sites.json，未触碰本文件。
+公式杀 封存复验：29/29 通过
+  [OK] sites.json 条目 100→99
+  [OK] sites.json 不再含 公式杀 文本
+  [OK] sites.json 其余 99 站逐字段未变
+  [OK] sites.json 站点顺序保持
+  [OK] sites.json 结尾保持 ]\n
+  [OK] sites.json 仅删除 公式杀 原文块（前缀/后缀逐字节相同）
+  [OK] sites.json 字节级 = 前态原文去掉该块（其余行尾逐字节保持）
+  [OK] sites.json 行尾计数符合「仅少 5 行」
+  [OK] archived_sites.json 恢复纯 LF、无尾换行
+  [OK] cache 站点 100→99
+  [OK] cache periods 未变
+  [OK] cache updated_at 未变
+  [OK] cache 不再含 公式杀
+  [OK] cache 其余 99 站条目逐字段未变
+  [OK] cache 键序仅少了 公式杀
+  [OK] cache 仍为 CRLF 且无尾换行
+  [OK] cache 格式可原样复现
+  [OK] archived 条目 12→13
+  [OK] archived 原 12 条逐字段未变
+  [OK] archived 顶层字段未变
+  [OK] archived 末条是 公式杀
+  [OK] archived url/pick 与原配置一致
+  [OK] archived 缓存快照与原缓存一致
+  [OK] archived 标注 tag/原因/断供期
+  [OK] archived 仍为 LF 无尾换行
+  [OK] load_sites() 得 99 站且无 公式杀
+  [OK] 290 失败清单未变（sha aa8ab643…）
+  [OK] 封存脚本本身未写 290 成功清单（内容变化来自外部写入者）
+  [OK] 未生成任何 .bak 文件

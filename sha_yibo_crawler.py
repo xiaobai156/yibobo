@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import base64
 import gzip
 import html
@@ -12,15 +13,73 @@ import ssl
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import date
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
+
+
+_browser_local = threading.local()
+
+
+def _get_browser_session():
+    session = getattr(_browser_local, "session", None)
+    if session is not None:
+        return session
+    try:
+        from playwright.sync_api import sync_playwright
+    except Exception as exc:
+        raise RuntimeError(f"Playwright不可用: {exc}") from exc
+    manager = sync_playwright()
+    playwright = manager.start() if hasattr(manager, "start") else manager
+    browser = playwright.chromium.launch(headless=True)
+    session = (playwright, browser)
+    _browser_local.session = session
+    return session
+
+
+def _close_browser_sessions() -> None:
+    session = getattr(_browser_local, "session", None)
+    if session is None:
+        return
+    _browser_local.session = None
+    playwright, browser = session
+    try:
+        browser.close()
+    finally:
+        stop = getattr(playwright, "stop", None)
+        if stop is not None:
+            stop()
+
+
+@contextmanager
+def _browser_page():
+    _, browser = _get_browser_session()
+    page = None
+    failed = False
+    try:
+        page = browser.new_page(ignore_https_errors=True)
+        yield page
+    except BaseException:
+        failed = True
+        _close_browser_sessions()
+        raise
+    finally:
+        if page is not None and not getattr(page, "closed", False):
+            try:
+                page.close()
+            except Exception:
+                if not failed:
+                    raise
+
+
+atexit.register(_close_browser_sessions)
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -31,11 +90,19 @@ WAVE_VALUES = {"红波", "蓝波", "绿波"}
 STRICT_REGION_NAMES = {"平特网", "猪八戒", "赤兔", "红姐论坛", "广东八二站"}
 REFERENCE_EXACT_SHA_YIBO_NAMES = {"迷人教授", "帅气成衣", "好奇好奇", "拥挤门", "花心膝盖"}
 IFRAME_TOPIC_SITE_NAMES = {"针锋相对", "自强不息", "宁静致远", "可怕人类", "我服慈悲", "桃花没酒"}
+ZQBX_NAME = "自强不息"
 QVUUQS_REFERENCE_DOUBLE_WAVE_KEYWORDS = {"珠光宝气": "双波中特", "攻克专家": "双波必中"}
 ANJU_ZILIAOYUAN_NAME = "安居资料员"
 EXACT_SHA_YIBO_SITE_NAMES = {"宝码玄机", "八步毛哥", "金吊桶", "宝马玄机"}
 STRICT_WINDOW_LIMIT = 5
 STRICT_WINDOW_THRESHOLD = 30
+SHENGGONG_ZHIGUO_NAME = "生功止过"
+ZHUNSHA_YIBO_NAME = "准杀一波"
+QVUUQS_USER_RECORD_WINDOW_NAMES = {"已洗妈咪"}
+ROURQING_SHASHOU_NAME = "柔情杀手"
+ROURQING_SHASHOU_KEYWORD = "绝杀一波"
+ROURQING_SHASHOU_USER_RE = re.compile(r"#/user/(\d+)")
+ROURQING_SHASHOU_PUBLISH_PATH = "/unite49/h5/userHomePage/userPublish"
 TEXT_TRANS = str.maketrans(
     {
         "絕": "绝",
@@ -194,21 +261,26 @@ def format_site_failure(site: "Site", reason: str | None) -> str:
     return f"{site.name} {site.url} 失败原因: {compact_detail(reason or '')}"
 
 
-def fetch_text(url: str, timeout: int = 20, retries: int = 2) -> str:
+def fetch_text_with_final_url(url: str, timeout: int = 20, retries: int = 2) -> tuple[str, str]:
     last_error: Exception | None = None
     for attempt in range(retries + 1):
         try:
             req = Request(url, headers={"User-Agent": "Mozilla/5.0", "Accept-Encoding": "gzip"})
             with urlopen(req, timeout=timeout, context=ssl._create_unverified_context()) as resp:
                 data = resp.read()
+                final_url = resp.geturl()
             if data[:2] == b"\x1f\x8b":
                 data = gzip.decompress(data)
-            return data.decode("utf-8", errors="replace")
+            return data.decode("utf-8", errors="replace"), final_url
         except Exception as exc:
             last_error = exc
             if attempt < retries:
                 time.sleep(0.5 * (attempt + 1))
     raise RuntimeError(str(last_error))
+
+
+def fetch_text(url: str, timeout: int = 20, retries: int = 2) -> str:
+    return fetch_text_with_final_url(url, timeout, retries)[0]
 
 
 def decode_strdecode_blocks(text: str) -> list[str]:
@@ -449,6 +521,64 @@ def select_qvuuqs_user_records(
     return sorted(matching, key=lambda record: max(qvuuqs_record_issues(record), default=0), reverse=True)
 
 
+def select_qvuuqs_user_record(
+    records: list[dict],
+    user_id: int,
+    keyword: str,
+    issue: int,
+    pick: str,
+    limit: int = STRICT_WINDOW_LIMIT,
+) -> dict:
+    keyword_key = normalize_qvuuqs_field(keyword)
+    matching: list[tuple[dict, int]] = []
+    records_by_id: dict[int, tuple[dict, int]] = {}
+    for record in records:
+        if not isinstance(record, dict) or normalize_qvuuqs_id(record.get("user_id")) != user_id:
+            continue
+        nested_user = record.get("user")
+        if isinstance(nested_user, dict) and normalize_qvuuqs_id(nested_user.get("id")) != user_id:
+            raise ValueError(f"用户文章作者ID不匹配: {record.get('id')}")
+        metadata = " ".join(str(record.get(field) or "") for field in ("title", "topic", "sub_topic", "section"))
+        if keyword_key not in normalize_qvuuqs_field(metadata):
+            continue
+        explicit_issues = qvuuqs_explicit_record_issues(record)
+        record_id = normalize_qvuuqs_id(record.get("id"))
+        if len(explicit_issues) != 1 or record_id is None:
+            continue
+        record_issue = next(iter(explicit_issues))
+        previous = records_by_id.get(record_id)
+        if previous is not None:
+            previous_record, previous_issue = previous
+            if previous_issue != record_issue or str(previous_record.get("content") or "") != str(
+                record.get("content") or ""
+            ):
+                raise ValueError(f"同一文章ID记录冲突: {record_id}")
+            continue
+        pair = (record, record_issue)
+        records_by_id[record_id] = pair
+        matching.append(pair)
+
+    issue_ids: dict[int, set[int]] = {}
+    for record, record_issue in matching:
+        issue_ids.setdefault(record_issue, set()).add(normalize_qvuuqs_id(record.get("id")))
+    if any(len(record_ids) > 1 for record_ids in issue_ids.values()):
+        raise ValueError("同一期匹配到多条用户文章")
+
+    ordered = sorted(
+        matching,
+        key=lambda item: (item[1], normalize_qvuuqs_id(item[0].get("id")) or 0),
+        reverse=True,
+    )
+    scoped = ordered[:limit] if pick == "top" else ordered[-limit:]
+    selected = [record for record, record_issue in scoped if record_issue == issue]
+    if selected:
+        return selected[0]
+    if any(record_issue == issue for _, record_issue in ordered):
+        label = "顶部" if pick == "top" else "尾部"
+        raise ValueError(f"指定期数不在{label}{limit}组范围")
+    raise ValueError(f"未找到指定期数: 用户页未找到指定栏目文章: {issue}期 {keyword}")
+
+
 def open_qvuuqs_page(page, url: str, timeout: int) -> None:
     try:
         page.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
@@ -480,62 +610,52 @@ def collect_qvuuqs_reference_documents(
     user_id, route_record_id = extract_qvuuqs_route(url)
     if route_record_id is None:
         raise ValueError("动态引用页URL缺少文章记录ID")
-    try:
-        from playwright.sync_api import sync_playwright
-    except Exception as exc:
-        raise RuntimeError(f"Playwright不可用: {exc}") from exc
+    with _browser_page() as page:
+        open_qvuuqs_page(page, url, timeout)
+        anchor_payload = fetch_qvuuqs_json(page, f"/api/v1/forums/{route_record_id}")
+        anchor, _ = locate_qvuuqs_record(anchor_payload, route_record_id)
+        anchor = validate_qvuuqs_reference_record(anchor, user_id, route_record_id, keyword)
+        owner_id = user_id or normalize_qvuuqs_id(anchor.get("user_id"))
+        if owner_id is None:
+            raise ValueError("动态引用页缺少作者用户ID")
 
-    with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True)
-        try:
-            page = browser.new_page(ignore_https_errors=True)
-            open_qvuuqs_page(page, url, timeout)
-            anchor_payload = fetch_qvuuqs_json(page, f"/api/v1/forums/{route_record_id}")
-            anchor, _ = locate_qvuuqs_record(anchor_payload, route_record_id)
-            anchor = validate_qvuuqs_reference_record(anchor, user_id, route_record_id, keyword)
-            owner_id = user_id or normalize_qvuuqs_id(anchor.get("user_id"))
-            if owner_id is None:
-                raise ValueError("动态引用页缺少作者用户ID")
+        payloads = [
+            fetch_qvuuqs_json(page, f"/api/v1/users/{owner_id}/references?per_page=100"),
+            fetch_qvuuqs_json(page, f"/api/v1/users/{owner_id}/forums?per_page=100"),
+        ]
+        records_by_id: dict[int, dict] = {}
+        for payload in payloads:
+            for record, _ in iter_qvuuqs_record_nodes(payload):
+                record_key = normalize_qvuuqs_id(record.get("id"))
+                if record_key is None:
+                    continue
+                previous = records_by_id.get(record_key)
+                if previous is not None:
+                    previous_signature = tuple(
+                        str(previous.get(field) or "")
+                        for field in ("user_id", "draw", "topic", "sub_topic", "section")
+                    )
+                    current_signature = tuple(
+                        str(record.get(field) or "")
+                        for field in ("user_id", "draw", "topic", "sub_topic", "section")
+                    )
+                    if previous_signature != current_signature:
+                        raise ValueError(f"当前用户索引同一记录ID字段冲突: {record_key}")
+                    continue
+                records_by_id[record_key] = record
 
-            payloads = [
-                fetch_qvuuqs_json(page, f"/api/v1/users/{owner_id}/references?per_page=100"),
-                fetch_qvuuqs_json(page, f"/api/v1/users/{owner_id}/forums?per_page=100"),
-            ]
-            records_by_id: dict[int, dict] = {}
-            for payload in payloads:
-                for record, _ in iter_qvuuqs_record_nodes(payload):
-                    record_key = normalize_qvuuqs_id(record.get("id"))
-                    if record_key is None:
-                        continue
-                    previous = records_by_id.get(record_key)
-                    if previous is not None:
-                        previous_signature = tuple(
-                            str(previous.get(field) or "")
-                            for field in ("user_id", "draw", "topic", "sub_topic", "section")
-                        )
-                        current_signature = tuple(
-                            str(record.get(field) or "")
-                            for field in ("user_id", "draw", "topic", "sub_topic", "section")
-                        )
-                        if previous_signature != current_signature:
-                            raise ValueError(f"当前用户索引同一记录ID字段冲突: {record_key}")
-                        continue
-                    records_by_id[record_key] = record
-
-            selected = select_qvuuqs_index_records(list(records_by_id.values()), owner_id, keyword, issue)
-            documents: list[str] = []
-            for index_record in selected:
-                current_id = normalize_qvuuqs_id(index_record.get("id"))
-                if current_id is None:
-                    raise ValueError("当前用户索引记录缺少文章ID")
-                detail_payload = fetch_qvuuqs_json(page, f"/api/v1/forums/{current_id}")
-                detail, _ = locate_qvuuqs_record(detail_payload, current_id)
-                detail = validate_qvuuqs_reference_record(detail, owner_id, current_id, keyword)
-                detail = validate_qvuuqs_target_record(detail, qvuuqs_index_record_issue(index_record))
-                documents.append(str(detail["content"]))
-            return documents
-        finally:
-            browser.close()
+        selected = select_qvuuqs_index_records(list(records_by_id.values()), owner_id, keyword, issue)
+        documents: list[str] = []
+        for index_record in selected:
+            current_id = normalize_qvuuqs_id(index_record.get("id"))
+            if current_id is None:
+                raise ValueError("当前用户索引记录缺少文章ID")
+            detail_payload = fetch_qvuuqs_json(page, f"/api/v1/forums/{current_id}")
+            detail, _ = locate_qvuuqs_record(detail_payload, current_id)
+            detail = validate_qvuuqs_reference_record(detail, owner_id, current_id, keyword)
+            detail = validate_qvuuqs_target_record(detail, qvuuqs_index_record_issue(index_record))
+            documents.append(str(detail["content"]))
+        return documents
 
 
 def collect_qvuuqs_user_documents(site: Site, period: int | None, timeout: int = 20) -> list[str]:
@@ -543,26 +663,31 @@ def collect_qvuuqs_user_documents(site: Site, period: int | None, timeout: int =
     if user_id is None or record_id is not None:
         raise ValueError("用户页URL缺少有效用户ID")
     keyword = site.keyword or "绝杀一波"
-    try:
-        from playwright.sync_api import sync_playwright
-    except Exception as exc:
-        raise RuntimeError(f"Playwright不可用: {exc}") from exc
-    with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True)
-        try:
-            page = browser.new_page(ignore_https_errors=True)
-            open_qvuuqs_page(page, site.url, timeout)
-            references = fetch_qvuuqs_json(page, f"/api/v1/users/{user_id}/references?per_page=20")
-            forums = fetch_qvuuqs_json(page, f"/api/v1/users/{user_id}/forums?per_page=20")
-            records = [
-                record
-                for payload in (references, forums)
-                for record, _ in iter_qvuuqs_record_nodes(payload)
-            ]
-            selected = select_qvuuqs_user_records(records, user_id, keyword, period)
-            return [str(record["content"]) for record in selected]
-        finally:
-            browser.close()
+    with _browser_page() as page:
+        open_qvuuqs_page(page, site.url, timeout)
+        references = fetch_qvuuqs_json(page, f"/api/v1/users/{user_id}/references?per_page=20")
+        forums = fetch_qvuuqs_json(page, f"/api/v1/users/{user_id}/forums?per_page=20")
+        records = [
+            record
+            for payload in (references, forums)
+            for record, _ in iter_qvuuqs_record_nodes(payload)
+        ]
+        if period is not None and site.name in QVUUQS_USER_RECORD_WINDOW_NAMES:
+            index_record = select_qvuuqs_user_record(
+                records, user_id, keyword, period, site.pick
+            )
+            target_id = normalize_qvuuqs_id(index_record.get("id"))
+            if target_id is None:
+                raise ValueError("目标用户文章缺少记录ID")
+            detail_payload = fetch_qvuuqs_json(page, f"/api/v1/forums/{target_id}")
+            detail, _ = locate_qvuuqs_record(detail_payload, target_id)
+            detail = validate_qvuuqs_reference_record(
+                detail, user_id, target_id, keyword
+            )
+            detail = validate_qvuuqs_target_record(detail, period)
+            return [str(detail["content"])]
+        selected = select_qvuuqs_user_records(records, user_id, keyword, period)
+        return [str(record["content"]) for record in selected]
 
 
 def collect_bazahei_documents(home_url: str, period: int | None, timeout: int = 20) -> list[str]:
@@ -628,25 +753,77 @@ def collect_longxiao_jiutian_documents(home_url: str, period: int | None, timeou
     return collect_documents(selected[0][1], timeout)
 
 
-def collect_rendered_documents(url: str, timeout: int = 20) -> list[str]:
-    try:
-        from playwright.sync_api import sync_playwright
-    except Exception as exc:
-        raise RuntimeError(f"Playwright不可用: {exc}") from exc
+def extract_rourqing_shashou_user_id(url: str) -> int | None:
+    match = ROURQING_SHASHOU_USER_RE.search(url)
+    return int(match.group(1)) if match else None
 
+
+def parse_rourqing_shashou_publish(payload: object, user_id: int) -> dict[int, str]:
+    if not isinstance(payload, dict) or payload.get("success") is not True:
+        raise ValueError("柔情杀手发布接口未返回成功响应")
+    data = payload.get("data")
+    records = data.get("list") if isinstance(data, dict) else None
+    if not isinstance(records, list) or not records:
+        raise ValueError("柔情杀手发布接口未返回文章列表")
+    documents: dict[int, str] = {}
+    for record in records:
+        if not isinstance(record, dict):
+            raise ValueError("柔情杀手发布接口存在非对象文章记录")
+        if normalize_qvuuqs_id(record.get("userId")) != user_id:
+            raise ValueError(f"柔情杀手文章作者ID不匹配: {record.get('id')}")
+        title = str(record.get("title") or "")
+        if ROURQING_SHASHOU_NAME not in title or ROURQING_SHASHOU_KEYWORD not in title:
+            raise ValueError(f"柔情杀手文章栏目不匹配: {record.get('id')} {title}")
+        issue = normalize_qvuuqs_id(record.get("number"))
+        if issue is None:
+            issue = normalize_qvuuqs_id(record.get("periodStr"))
+        if issue is None or not (100 <= issue <= 999):
+            raise ValueError(f"柔情杀手文章期数字段无效: {record.get('id')}")
+        content = str(record.get("description") or "").strip()
+        if not content:
+            raise ValueError(f"柔情杀手文章正文为空: {issue}期")
+        if f"{issue}期" not in content:
+            raise ValueError(f"柔情杀手文章正文未包含自身期数: {issue}期")
+        previous = documents.get(issue)
+        if previous is not None and previous != content:
+            raise ValueError(f"柔情杀手同一期存在多条冲突文章: {issue}期")
+        documents[issue] = content
+    return documents
+
+
+def collect_rourqing_shashou_documents(site: Site, period: int | None = None, timeout: int = 20) -> list[str]:
+    user_id = extract_rourqing_shashou_user_id(site.url)
+    if user_id is None:
+        raise ValueError("柔情杀手用户页URL缺少有效用户ID")
+    with _browser_page() as page:
+        open_qvuuqs_page(page, site.url, timeout)
+        payload = fetch_qvuuqs_json(
+            page,
+            f"{ROURQING_SHASHOU_PUBLISH_PATH}?userId={user_id}&type=3&pageNum=1"
+            "&title=&newVersion=1&lotteryType=0",
+        )
+    documents = parse_rourqing_shashou_publish(payload, user_id)
+    if period is None:
+        return [documents[issue] for issue in sorted(documents)]
+    if period not in documents:
+        raise ValueError(f"未找到指定期数: 柔情杀手用户页未发布 {period}期")
+    return [documents[period]]
+
+
+def collect_rendered_documents(url: str, timeout: int = 20, retries: int = 1) -> list[str]:
     page_timeout = timeout * 1000
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        try:
-            page = browser.new_page(ignore_https_errors=True)
+    with _browser_page() as page:
+        for attempt in range(retries + 1):
             try:
-                page.goto(url, wait_until="networkidle", timeout=page_timeout)
+                try:
+                    page.goto(url, wait_until="networkidle", timeout=page_timeout)
+                except Exception:
+                    page.goto(url, wait_until="domcontentloaded", timeout=page_timeout)
+                    page.wait_for_timeout(1500)
+                return [page.locator("body").inner_text(timeout=5000), page.content()]
             except Exception:
-                page.goto(url, wait_until="domcontentloaded", timeout=page_timeout)
-                page.wait_for_timeout(1500)
-            return [page.locator("body").inner_text(timeout=5000), page.content()]
-        finally:
-            browser.close()
+                if attempt == retries:
+                    raise
 
 
 def reference_post_matches(text: str, today: str, keyword: str, issue: int | None = None) -> bool:
@@ -665,21 +842,12 @@ def collect_reference_post_documents(
     user_id, record_id = extract_qvuuqs_route(url)
     if record_id is None:
         raise ValueError("动态引用页URL缺少文章记录ID")
-    try:
-        from playwright.sync_api import sync_playwright
-    except Exception as exc:
-        raise RuntimeError(f"Playwright不可用: {exc}") from exc
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        try:
-            page = browser.new_page(ignore_https_errors=True)
-            open_qvuuqs_page(page, url, timeout)
-            payload = fetch_qvuuqs_json(page, f"/api/v1/forums/{record_id}")
-            record, _ = locate_qvuuqs_record(payload, record_id)
-            validated = validate_qvuuqs_reference_record(record, user_id, record_id, keyword)
-            return [str(validated["content"])]
-        finally:
-            browser.close()
+    with _browser_page() as page:
+        open_qvuuqs_page(page, url, timeout)
+        payload = fetch_qvuuqs_json(page, f"/api/v1/forums/{record_id}")
+        record, _ = locate_qvuuqs_record(payload, record_id)
+        validated = validate_qvuuqs_reference_record(record, user_id, record_id, keyword)
+        return [str(validated["content"])]
 
 
 def extract_topic_record_id(url: str) -> str:
@@ -713,33 +881,23 @@ def validate_iframe_topic_page(
 
 def collect_iframe_topic_documents(site: Site, period: int | None = None, timeout: int = 20) -> list[str]:
     expected_topic_id = extract_topic_record_id(site.url)
-    try:
-        from playwright.sync_api import sync_playwright
-    except Exception as exc:
-        raise RuntimeError(f"Playwright不可用: {exc}") from exc
-
     page_timeout = timeout * 1000
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        try:
-            page = browser.new_page(ignore_https_errors=True)
-            page.goto(site.url, wait_until="domcontentloaded", timeout=page_timeout)
-            article = page.locator(".detail_info_forum2_item")
-            article.first.wait_for(state="attached", timeout=page_timeout)
-            article_count = article.count()
-            target = article.first
-            heading = target.locator(".forum-head").inner_text(timeout=5000)
-            body = target.locator(".forum-body").inner_text(timeout=5000)
-            return validate_iframe_topic_page(
-                page.url,
-                expected_topic_id,
-                site.name,
-                article_count,
-                heading,
-                body,
-            )
-        finally:
-            browser.close()
+    with _browser_page() as page:
+        page.goto(site.url, wait_until="domcontentloaded", timeout=page_timeout)
+        article = page.locator(".detail_info_forum2_item")
+        article.first.wait_for(state="attached", timeout=page_timeout)
+        article_count = article.count()
+        target = article.first
+        heading = target.locator(".forum-head").inner_text(timeout=5000)
+        body = target.locator(".forum-body").inner_text(timeout=5000)
+        return validate_iframe_topic_page(
+            page.url,
+            expected_topic_id,
+            site.name,
+            article_count,
+            heading,
+            body,
+        )
 
 
 def collect_anju_ziliaoyuan_documents(url: str, issue: int | None, timeout: int = 20) -> list[str]:
@@ -757,6 +915,120 @@ def plain_lines(documents: list[str]) -> list[str]:
     parser.feed("\n".join(documents))
     text = html.unescape("".join(parser.parts))
     return [re.sub(r"\s+", " ", line).strip() for line in text.splitlines() if line.strip()]
+
+
+def extract_shenggong_article_documents(
+    fragments: list[str], site_name: str = SHENGGONG_ZHIGUO_NAME
+) -> list[str]:
+    starts: list[int] = []
+    for index, fragment in enumerate(fragments[:-1]):
+        title_text = " ".join(plain_lines([fragment])).translate(TEXT_TRANS)
+        author_text = " ".join(plain_lines([fragments[index + 1]])).translate(TEXT_TRANS)
+        if re.search(r"(?<!\d)\d{1,4}\s*期.{0,40}?绝杀\s*一波", title_text) and re.search(
+            rf"(?<![一-龥A-Za-z0-9]){re.escape(site_name)}(?![一-龥A-Za-z0-9])",
+            author_text,
+        ):
+            starts.append(index)
+    if not starts:
+        return []
+    if len(starts) != 1:
+        raise ValueError("同一脚本中生功止过文章边界不唯一")
+
+    start = starts[0]
+    end = len(fragments)
+    for index in range(start + 2, len(fragments)):
+        boundary_text = " ".join(plain_lines([fragments[index]]))
+        if "上一篇" in boundary_text or "下一篇" in boundary_text:
+            end = index
+            break
+    return fragments[start:end]
+
+
+def collect_shenggong_documents(site: Site, timeout: int = 20) -> list[str]:
+    expected_topic_id = extract_topic_record_id(site.url)
+    main_document, final_url = fetch_text_with_final_url(site.url, timeout)
+    if extract_topic_record_id(final_url) != expected_topic_id:
+        raise ValueError(
+            f"生功止过topic ID不一致: 期望{expected_topic_id},实际{extract_topic_record_id(final_url)}"
+        )
+
+    articles: list[list[str]] = []
+    seen_scripts: set[str] = set()
+    for match in SCRIPT_SRC_RE.finditer(main_document):
+        script_url = urljoin(site.url, match.group(2))
+        if "/upload/script/" not in script_url.lower() or script_url in seen_scripts:
+            continue
+        seen_scripts.add(script_url)
+        fragments = decode_strdecode_blocks(fetch_text(script_url, timeout))
+        article = extract_shenggong_article_documents(fragments, site.name)
+        if article:
+            articles.append(article)
+    if not articles:
+        raise ValueError("未找到生功止过同源文章区块")
+    if len(articles) != 1:
+        raise ValueError("生功止过同源文章区块不唯一")
+    return articles[0]
+
+
+def extract_zhunsha_article_documents(fragments: list[str]) -> list[str]:
+    starts = [
+        index
+        for index, fragment in enumerate(fragments)
+        if re.search(
+            r"(?<!\d)\d{1,4}\s*期\s*[:：]\s*[【\[]\s*准杀一波\s*[】\]]",
+            " ".join(plain_lines([fragment])).translate(TEXT_TRANS),
+        )
+    ]
+    if not starts:
+        return []
+    if len(starts) != 1:
+        raise ValueError("同一脚本中准杀一波文章边界不唯一")
+
+    article: list[str] = []
+    for fragment in fragments[starts[0] :]:
+        article.append(fragment)
+        lines = plain_lines([fragment])
+        if any("站长宣言" in line or "上一篇" in line or "下一篇" in line for line in lines):
+            break
+    return article
+
+
+def collect_zhunsha_documents(site: Site, timeout: int = 20) -> list[str]:
+    expected_topic_id = extract_topic_record_id(site.url)
+    main_document, final_url = fetch_text_with_final_url(site.url, timeout)
+    actual_topic_id = extract_topic_record_id(final_url)
+    if actual_topic_id != expected_topic_id:
+        raise ValueError(f"准杀一波topic ID不一致: 期望{expected_topic_id},实际{actual_topic_id}")
+
+    articles: list[list[str]] = []
+    seen_scripts: set[str] = set()
+    for match in SCRIPT_SRC_RE.finditer(main_document):
+        script_url = urljoin(site.url, match.group(2))
+        if "/upload/script/" not in script_url.lower() or script_url in seen_scripts:
+            continue
+        seen_scripts.add(script_url)
+        script_document = fetch_text(script_url, timeout)
+        fragments = [script_document]
+        seen_fragments = {script_document}
+        for _ in range(3):
+            additions: list[str] = []
+            for fragment in fragments:
+                for decoded in decode_strdecode_blocks(fragment):
+                    if decoded in seen_fragments:
+                        continue
+                    seen_fragments.add(decoded)
+                    additions.append(decoded)
+            if not additions:
+                break
+            fragments.extend(additions)
+        article = extract_zhunsha_article_documents(fragments)
+        if article:
+            articles.append(article)
+    if not articles:
+        raise ValueError("未找到准杀一波同源文章区块")
+    if len(articles) != 1:
+        raise ValueError("准杀一波同源文章区块不唯一")
+    return articles[0]
 
 
 def normalize_wave_value(value: str) -> str | None:
@@ -939,6 +1211,25 @@ def extract_exact_sha_yibo_candidates(documents: list[str]) -> list[Candidate]:
                     seen.add(key)
                     candidates.append(Candidate(issue, value, line, len(candidates)))
     return candidates
+
+
+def extract_zqbx_candidates(documents: list[str]) -> list[Candidate]:
+    """自强不息专属解析：帖子是「每期在顶部追加一行」的累计序列。
+
+    本轮行从首行开始逐期递减（本期在前），跨年时序列在 001→365 处回卷，
+    回卷之后的行属于上一轮，期号标签与本轮相同但并非本期数据
+    （273 期形态：顶部本轮 273 未开行 + 底部上一轮 273 已开行）。
+    只保留从首行起、单调递减的当前轮次行，回卷后的上一轮行一律不作为候选，
+    既不参与冲突判定，也不能当作指定期数的兜底来源。
+    """
+    current_cycle: list[Candidate] = []
+    previous_issue: int | None = None
+    for item in extract_exact_sha_yibo_candidates(documents):
+        if previous_issue is not None and item.issue > previous_issue:
+            break
+        current_cycle.append(item)
+        previous_issue = item.issue
+    return current_cycle
 
 
 def extract_shiwai_taoyuan_candidates(documents: list[str]) -> list[Candidate]:
@@ -1205,6 +1496,115 @@ def extract_zhuojin_jianzhou_candidates(documents: list[str]) -> list[Candidate]
         r"(?<!\d)(\d{1,4})\s*期[^\r\n]{0,20}?《\s*两波中特\s*》\s*《\s*([红蓝绿])波\s*([红蓝绿])波\s*》"
     )
     return extract_two_wave_missing_candidates(documents, pattern)
+
+
+def _find_seam(issues: list[int]) -> tuple[int | None, bool]:
+    """定位跨年接缝，返回 (接缝下标, 去年段是否在前)。
+
+    本项目期号 = 年内第几天（1..365），所以「365 和 001 同时出现」才是跨年接缝，
+    阈值必须用 >=300 与 <=10，不能用 >10（否则 001..012 这种升序段会假接缝）。
+    - 365 -> 001：去年段在前，接缝在 index，今年段从 index 起
+    - 001 -> >=300：今年段在前，接缝在 index，去年段从 index 起
+    """
+    if len(issues) < 2:
+        return None, False
+    for index in range(1, len(issues)):
+        prev_issue, curr_issue = issues[index - 1], issues[index]
+        if prev_issue >= 300 and curr_issue <= 10:
+            return index, True
+        if prev_issue <= 10 and curr_issue >= 300:
+            return index, False
+    return None, False
+
+
+def _keep_first_descending_run(candidates: list[Candidate]) -> list[Candidate]:
+    """跨年绕回时只保留今年那一段（去年段在后时截尾，在前时跳过）。
+
+    只在 _find_seam 明确识别出跨年接缝时才动手；升序站、缺期站、
+    段内插大期号等情况一律原样返回，不做任何截断。
+    """
+    if len(candidates) < 2:
+        return candidates
+    issues = [item.issue for item in candidates]
+    seam, old_first = _find_seam(issues)
+    if seam is None:
+        return candidates
+    if old_first:
+        # 去年段在前，今年段在 seam 之后
+        return candidates[seam:]
+    return candidates[:seam]
+
+
+_PENDING_DRAW_PATTERN = re.compile(r"开\s*[:：?？]?\s*0{2,}")
+
+
+def _is_pending_period_candidate(candidate: "Candidate", issue: int) -> bool:
+    """目标期的下一期若尚未开奖，属待开期，不能当作「旧年更大期号」的证据。
+
+    页面在新一期开奖前会先挂出该期（开0000/开：00/开？00），
+    若把它当成旧年数据，全站都会在「目标期 = 最新已开期」时被误杀。
+    """
+    if candidate.issue != issue + 1:
+        return False
+    line = candidate.line or ""
+    if _PENDING_DRAW_PATTERN.search(line):
+        return True
+    # 行被截断、看不到开奖标记时同样无法证明已开奖
+    return "开" not in line
+
+
+def _looks_like_stale_year_block(issues: list[int], issue: int) -> bool:
+    """整段都是旧年数据的判据：出现比目标期更大的期号，却完全没有 <=10 的小期号。
+
+    期号 = 年内第几天，所以「比目标期大」才可能是去年留下的更大期号
+    （例如今年只到 298，页面却有 365）。反过来 300..291 这种当期窗口
+    全部 <= 目标期，属正常，不能误判。
+
+    真实跨年页面一定同时含 365 和 001；只有大期号一侧而没有 001，
+    说明抓到的是去年那一段。
+    """
+    if not issues:
+        return False
+    return max(issues) > issue and not any(value <= 10 for value in issues)
+
+
+def _reject_if_wrapped_before_target(
+    candidates: list[Candidate], issue: int
+) -> tuple[list[Candidate], str | None]:
+    """判断目标期是否落在去年段里，是则判失败而不是借值。
+
+    三道判据：
+    1. 整段像旧年数据（有比目标期更大的期号但无 <=10）-> 直接失败。
+    2. 有 365<->001 真接缝：按接缝两侧判定目标期属于今年段还是去年段。
+    3. 无接缝：不做额外推断，交回原样。
+    """
+    issues = [item.issue for item in candidates]
+    # 先判整段旧年：即便目标期根本不在里面，也要给出准确原因。
+    # 顶部未开奖的下一期不算旧年证据。
+    effective_issues = [
+        item.issue for item in candidates if not _is_pending_period_candidate(item, issue)
+    ]
+    if _looks_like_stale_year_block(effective_issues, issue):
+        return [], "列表已绕回，疑似旧年数据"
+
+    positions = [index for index, item in enumerate(candidates) if item.issue == issue]
+    if not positions:
+        return candidates, None
+
+    seam, old_first = _find_seam(issues)
+    if seam is None:
+        return candidates, None
+
+    if old_first:
+        # 去年段在前：目标期只要出现在 seam 之前，就是去年值
+        if any(index < seam for index in positions):
+            return [], "列表已绕回，疑似旧年数据"
+        return candidates, None
+
+    # 去年段在后：目标期只在 seam 之后，说明今年没发该期，拿到的是去年同号
+    if all(index >= seam for index in positions):
+        return [], "列表已绕回，疑似旧年数据"
+    return candidates, None
 
 
 def extract_pushuo_mili_candidates(documents: list[str]) -> list[Candidate]:
@@ -1665,6 +2065,7 @@ REGISTERED_FOCUS_SITE_NAMES = {
     "长乐未央",
     "闻风丧胆",
     "雨果天气",
+    "清气若兰",
     "马道成功",
     "鸿运",
 }
@@ -1739,7 +2140,9 @@ def extract_zhunsha_yibo_candidates(documents: list[str]) -> list[Candidate]:
     seen: set[tuple[int, str, str]] = set()
     patterns = [
         re.compile(r"(?<!\d)(\d{1,4})\s*期.{0,80}?T\d{1,2}\s*=\s*([红蓝绿])波"),
-        re.compile(r"(?<!\d)(\d{1,4})\s*期.{0,20}?特杀一波\s*[:：]\s*([红蓝绿])波"),
+        re.compile(
+            r"(?<!\d)(\d{1,4})\s*期.{0,20}?特杀一波\s*[:：]\s*([红蓝绿])(?:波)?(?![一-龥A-Za-z0-9])"
+        ),
     ]
     for line in plain_lines(documents):
         normalized = line.translate(TEXT_TRANS)
@@ -1773,6 +2176,8 @@ def is_strict_region(site: Site) -> bool:
 
 
 def extract_primary_candidates(documents: list[str], site: Site) -> list[Candidate]:
+    if site.name == SHENGGONG_ZHIGUO_NAME:
+        return extract_exact_sha_yibo_candidates(documents)
     if site.name == "金多宝":
         return extract_jinduobao_candidates(documents)
     if site.name == "捉襟见肘":
@@ -1837,6 +2242,8 @@ def extract_primary_candidates(documents: list[str], site: Site) -> list[Candida
         return extract_qvuuqs_reference_double_wave_candidates(
             documents, QVUUQS_REFERENCE_DOUBLE_WAVE_KEYWORDS[site.name]
         )
+    if site.name == ZQBX_NAME:
+        return extract_zqbx_candidates(documents)
     if site.name in IFRAME_TOPIC_SITE_NAMES:
         return extract_exact_sha_yibo_candidates(documents)
     if site.name in EXACT_SHA_YIBO_SITE_NAMES:
@@ -1935,6 +2342,17 @@ def has_conflicting_target_candidates(candidates: list[Candidate], issue: int) -
     return len({item.value for item in candidates if item.issue == issue}) > 1
 
 
+def select_exact_candidate_with_reason(
+    candidates: list[Candidate], issue: int
+) -> tuple[Candidate | None, str | None]:
+    if has_conflicting_target_candidates(candidates, issue):
+        return None, "指定期数存在多条冲突数据"
+    selected = [item for item in candidates if item.issue == issue]
+    if not selected:
+        return None, "未找到指定期数"
+    return min(selected, key=lambda item: item.order), None
+
+
 def select_candidate_in_region_limit(
     candidates: list[Candidate], issue: int, pick: str, limit: int
 ) -> tuple[Candidate | None, str | None]:
@@ -2001,6 +2419,64 @@ def format_success(results: list[SuccessResult]) -> str:
     for rank, (value, count) in enumerate(ranked, start=1):
         lines.append(f"{value} {count} {rank}")
     return "\n".join(lines) + "\n"
+
+
+def parse_success_results(text: str) -> list[SuccessResult]:
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "内容 名称":
+        raise ValueError("成功TXT格式无效: 缺少明细标题")
+    try:
+        detail_end = next(index for index, line in enumerate(lines[1:], start=1) if not line.strip())
+    except StopIteration as exc:
+        raise ValueError("成功TXT格式无效: 缺少明细边界") from exc
+    if detail_end + 1 >= len(lines) or lines[detail_end + 1].strip() != "内容 次数 排名":
+        raise ValueError("成功TXT格式无效: 缺少排名标题")
+
+    results: list[SuccessResult] = []
+    for line in lines[1:detail_end]:
+        match = re.fullmatch(r"(红波|蓝波|绿波)\s+(.+)", line.strip())
+        if not match or not match.group(2).strip():
+            raise ValueError(f"成功TXT格式无效: 无法解析明细行: {line}")
+        results.append(SuccessResult(match.group(2).strip(), match.group(1)))
+    return results
+
+
+def merge_success_results(
+    existing: list[SuccessResult], current: list[SuccessResult]
+) -> list[SuccessResult]:
+    merged = list(existing)
+    known_names = {item.name for item in existing}
+    for item in current:
+        if item.name in known_names:
+            continue
+        merged.append(item)
+        known_names.add(item.name)
+    return merged
+
+
+def atomic_write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False
+        ) as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+            temporary_path = Path(handle.name)
+        os.replace(temporary_path, path)
+    finally:
+        if temporary_path is not None and temporary_path.exists():
+            temporary_path.unlink()
+
+
+def write_success_results(path: Path, current: list[SuccessResult]) -> list[SuccessResult]:
+    existing = parse_success_results(path.read_text(encoding="utf-8")) if path.exists() else []
+    merged = merge_success_results(existing, current)
+    if not path.exists() or len(merged) != len(existing):
+        atomic_write_text(path, format_success(merged))
+    return merged
 
 
 def site_cache_key(site: Site, name_counts: Counter[str]) -> str:
@@ -2151,6 +2627,10 @@ def is_qvuuqs_dynamic_site(site: Site) -> bool:
 
 def collect_documents_for_site(site: Site, period: int | None = None) -> list[str]:
     try:
+        if site.name == SHENGGONG_ZHIGUO_NAME:
+            return collect_shenggong_documents(site)
+        if site.name == ZHUNSHA_YIBO_NAME:
+            return collect_zhunsha_documents(site)
         if site.name == "巴扎嘿":
             return collect_bazahei_documents(site.url, period)
         if site.name == "龙啸九天":
@@ -2164,7 +2644,7 @@ def collect_documents_for_site(site: Site, period: int | None = None) -> list[st
         if site.name == ANJU_ZILIAOYUAN_NAME:
             return collect_anju_ziliaoyuan_documents(site.url, period)
         if site.name == "柔情杀手":
-            return collect_rendered_documents(site.url)
+            return collect_rourqing_shashou_documents(site, period)
         if site.name in IFRAME_TOPIC_SITE_NAMES:
             return collect_iframe_topic_documents(site, period)
         if is_qvuuqs_dynamic_site(site):
@@ -2180,6 +2660,8 @@ def collect_documents_for_site(site: Site, period: int | None = None) -> list[st
             raise ValueError("未登记动态用户页专属解析")
         return collect_documents(site.url)
     except Exception:
+        if site.name in {SHENGGONG_ZHIGUO_NAME, ZHUNSHA_YIBO_NAME}:
+            raise
         if site.name == "巴扎嘿":
             raise
         if site.name == "龙啸九天":
@@ -2187,7 +2669,7 @@ def collect_documents_for_site(site: Site, period: int | None = None) -> list[st
         if site.name == ANJU_ZILIAOYUAN_NAME:
             raise
         if site.name == "柔情杀手":
-            return collect_rendered_documents(site.url)
+            raise
         if site.name in IFRAME_TOPIC_SITE_NAMES:
             raise
         if is_qvuuqs_dynamic_site(site):
@@ -2205,7 +2687,11 @@ def collect_site_history(site: Site, keep: int = 10) -> dict[int, str]:
     if not primary_candidates:
         documents = collect_documents_for_site(site)
         primary_candidates = extract_primary_candidates(documents, site)
+    # 重建缓存没有单一目标期：先按接缝截断保留今年段，再交统一校验
+    primary_candidates = _keep_first_descending_run(primary_candidates)
     return build_site_history(primary_candidates, site.pick, keep)
+
+
 def collect_site_history_with_timeout(site: Site, keep: int = 10, timeout: int = 90) -> dict[int, str]:
     payload = json.dumps(
         {"name": site.name, "url": site.url, "pick": site.pick, "keyword": site.keyword, "keep": keep},
@@ -2346,16 +2832,26 @@ def crawl_site(site: Site, period: int) -> tuple[SuccessResult | None, str | Non
         documents = collect_documents_for_site(site, period)
         strict_region = is_strict_region(site)
         primary_candidates = extract_primary_candidates(documents, site)
+        # 先判绕回（需要看到接缝），再截断，顺序不可颠倒
+        primary_candidates, wrapped_reason = _reject_if_wrapped_before_target(primary_candidates, period)
+        primary_candidates = _keep_first_descending_run(primary_candidates)
         candidates = primary_candidates
         missing_reason = missing_primary_reason(site) if not primary_candidates else None
-        if strict_region:
+        if site.name in QVUUQS_USER_RECORD_WINDOW_NAMES:
+            candidate, reason = select_exact_candidate_with_reason(candidates, period)
+        elif strict_region:
             candidate, reason = select_candidate_in_region_limit(candidates, period, site.pick, 3)
         else:
             candidate, reason = select_candidate_with_reason(candidates, period, site.pick)
-        reason = missing_reason or reason
+        reason = wrapped_reason or missing_reason or reason
+        primary_wrapped = wrapped_reason == "列表已绕回，疑似旧年数据"
         if (
             candidate is None
+            and not primary_wrapped
             and site.name != ANJU_ZILIAOYUAN_NAME
+            and site.name != SHENGGONG_ZHIGUO_NAME
+            and site.name != ZHUNSHA_YIBO_NAME
+            and site.name != "柔情杀手"
             and not is_qvuuqs_dynamic_site(site)
             and "#/users/" not in site.url
             and "#/forums/" not in site.url
@@ -2367,16 +2863,22 @@ def crawl_site(site: Site, period: int) -> tuple[SuccessResult | None, str | Non
                     else collect_rendered_documents(site.url)
                 )
                 fallback_candidates = extract_primary_candidates(fallback_documents, site)
+                fallback_candidates, fallback_wrapped_reason = _reject_if_wrapped_before_target(
+                    fallback_candidates, period
+                )
+                fallback_candidates = _keep_first_descending_run(fallback_candidates)
                 candidates = fallback_candidates
                 fallback_missing_reason = missing_primary_reason(site) if not fallback_candidates else None
                 if strict_region:
                     candidate, fallback_reason = select_candidate_in_region_limit(candidates, period, site.pick, 3)
                 else:
                     candidate, fallback_reason = select_candidate_with_reason(candidates, period, site.pick)
-                fallback_reason = fallback_missing_reason or fallback_reason
+                fallback_reason = fallback_wrapped_reason or fallback_missing_reason or fallback_reason
                 if candidate is None and fallback_reason:
-                    if not (reason and fallback_reason == missing_primary_reason(site)):
-                        reason = fallback_reason
+                    # 绕回判定是硬结论，不能被兜底的「未找到指定期数」覆盖
+                    if reason != "列表已绕回，疑似旧年数据":
+                        if not (reason and fallback_reason == missing_primary_reason(site)):
+                            reason = fallback_reason
             except Exception:
                 pass
         if candidate is None:
@@ -2425,19 +2927,18 @@ def run(
 
     results = [item for item in ordered_results if item is not None]
     fail = [item for item in ordered_failures if item is not None]
-    if update_cache:
-        update_recent_cache(DEFAULT_CACHE_FILE, period, sites, results)
-
     output_dir.mkdir(parents=True, exist_ok=True)
     failure_dir = failure_output_dir or output_dir
     success = [f"{item.value} {item.name}" for item in results]
-    (output_dir / f"{period}期-一波.txt").write_text(format_success(results), encoding="utf-8")
+    write_success_results(output_dir / f"{period}期-一波.txt", results)
     fail_file = failure_dir / f"{period}期-杀一波-失败.txt"
     if fail:
         failure_dir.mkdir(parents=True, exist_ok=True)
         fail_file.write_text("\n\n".join(fail) + "\n", encoding="utf-8")
     elif fail_file.exists():
         fail_file.unlink()
+    if update_cache:
+        update_recent_cache(DEFAULT_CACHE_FILE, period, sites, results)
     return success, fail
 
 

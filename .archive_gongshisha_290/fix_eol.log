@@ -1,0 +1,5 @@
+== 修正后 ==
+  sites.json: size=13522 (before 13639) crlf=487 lf=519 tail=b'op"\n  }\n]\n'
+  recent_10_cache.json: size=44544 (before 44866) crlf=1718 lf=1718 tail=b' }\r\n  }\r\n}'
+  archived_sites.json: size=7394 (before 6670) crlf=0 lf=283 tail=b'   }\n  ]\n}'
+  sites.json 站点数: 99 ；archived 条目数: 13

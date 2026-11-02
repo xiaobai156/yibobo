@@ -1,0 +1,284 @@
+{
+  "archived_at": "2026-10-08 22:16:42",
+  "reason": "用户点名封存：缓存近 10 期与保留站逐期完全一致（重复站），不再抓取/不写入/不更新缓存",
+  "period_window": [
+    281,
+    280,
+    279,
+    278,
+    277,
+    276,
+    275,
+    274,
+    273,
+    272
+  ],
+  "sites": [
+    {
+      "name": "长乐未央",
+      "url": "https://kxglojup.fao5v-9u0oz-okhubb.work:16677/topic/451699.html",
+      "pick": "bottom",
+      "archive_tag": "dup-of:婷容修态",
+      "duplicate_of": "婷容修态",
+      "archived_period": 281,
+      "cache_data": {
+        "272": "绿波",
+        "273": "蓝波",
+        "274": "红波",
+        "275": "绿波",
+        "276": "蓝波",
+        "277": "红波",
+        "278": "绿波",
+        "279": "蓝波",
+        "280": "红波",
+        "281": "绿波"
+      }
+    },
+    {
+      "name": "六彩圣君",
+      "url": "https://vqxzuc.fggtp-huz0q-sbrraa.xyz:16677/topic/456276.html",
+      "pick": "top",
+      "archive_tag": "dup-of:婷容修态",
+      "duplicate_of": "婷容修态",
+      "archived_period": 281,
+      "cache_data": {
+        "272": "绿波",
+        "273": "蓝波",
+        "274": "红波",
+        "275": "绿波",
+        "276": "蓝波",
+        "277": "红波",
+        "278": "绿波",
+        "279": "蓝波",
+        "280": "红波",
+        "281": "绿波"
+      }
+    },
+    {
+      "name": "身强体壮",
+      "url": "https://sunbkqa.khd56-rzfaq-drqccw.xyz:16677/topic/537622.html",
+      "pick": "top",
+      "archive_tag": "dup-of:婷容修态",
+      "duplicate_of": "婷容修态",
+      "archived_period": 281,
+      "cache_data": {
+        "272": "绿波",
+        "273": "蓝波",
+        "274": "红波",
+        "275": "绿波",
+        "276": "蓝波",
+        "277": "红波",
+        "278": "绿波",
+        "279": "蓝波",
+        "280": "红波",
+        "281": "绿波"
+      }
+    },
+    {
+      "name": "平特网",
+      "url": "https://tulprhfc.wghcb-bnmgm-hyymaz.work:16655/",
+      "pick": "top",
+      "archive_tag": "dup-of:井井有条",
+      "duplicate_of": "井井有条",
+      "archived_period": 281,
+      "cache_data": {
+        "272": "蓝波",
+        "273": "绿波",
+        "274": "红波",
+        "275": "蓝波",
+        "276": "绿波",
+        "277": "红波",
+        "278": "蓝波",
+        "279": "绿波",
+        "280": "红波",
+        "281": "绿波"
+      }
+    },
+    {
+      "name": "踏雪",
+      "url": "https://ntvjzt.gau41-qu6jy-sotyug.work:16677/",
+      "pick": "top",
+      "keyword": "殺一波",
+      "archive_tag": "dup-of:井井有条",
+      "duplicate_of": "井井有条",
+      "archived_period": 281,
+      "cache_data": {
+        "272": "蓝波",
+        "273": "绿波",
+        "274": "红波",
+        "275": "蓝波",
+        "276": "绿波",
+        "277": "红波",
+        "278": "蓝波",
+        "279": "绿波",
+        "280": "红波",
+        "281": "绿波"
+      }
+    },
+    {
+      "name": "窃窃私语",
+      "url": "https://uhaxnrzx.q76gf-deec8-zqckeo.xyz:16677/topic/615684.html",
+      "pick": "top",
+      "archive_tag": "dup-of:远赴相思",
+      "duplicate_of": "远赴相思",
+      "archived_period": 281,
+      "cache_data": {
+        "272": "红波",
+        "273": "绿波",
+        "274": "蓝波",
+        "275": "红波",
+        "276": "绿波",
+        "277": "蓝波",
+        "278": "红波",
+        "279": "绿波",
+        "280": "蓝波",
+        "281": "红波"
+      }
+    },
+    {
+      "name": "自强不息",
+      "url": "https://pjaliv.o53jc-9p80e-xxbelu.xyz:16677/topic/625967.html",
+      "pick": "top",
+      "archive_tag": "dup-of:远赴相思",
+      "duplicate_of": "远赴相思",
+      "archived_period": 281,
+      "cache_data": {
+        "272": "红波",
+        "273": "绿波",
+        "274": "蓝波",
+        "275": "红波",
+        "276": "绿波",
+        "277": "蓝波",
+        "278": "红波",
+        "279": "绿波",
+        "280": "蓝波",
+        "281": "红波"
+      }
+    },
+    {
+      "name": "金吊桶",
+      "url": "https://llbpelz.mkyqu-q918k-hammci.xyz:16677/",
+      "pick": "bottom",
+      "archive_tag": "dup-of:广东八二站",
+      "duplicate_of": "广东八二站",
+      "archived_period": 281,
+      "cache_data": {
+        "272": "红波",
+        "273": "绿波",
+        "274": "红波",
+        "275": "绿波",
+        "276": "蓝波",
+        "277": "蓝波",
+        "278": "绿波",
+        "279": "红波",
+        "280": "蓝波",
+        "281": "绿波"
+      }
+    },
+    {
+      "name": "二肖四码",
+      "url": "https://eudkyp.luqv0-yf46s-xrnpkz.xyz:16677/",
+      "pick": "top",
+      "archive_tag": "dup-of:无视一切",
+      "duplicate_of": "无视一切",
+      "archived_period": 281,
+      "cache_data": {
+        "272": "红波",
+        "273": "红波",
+        "274": "绿波",
+        "275": "蓝波",
+        "276": "红波",
+        "277": "绿波",
+        "278": "红波",
+        "279": "绿波",
+        "280": "蓝波",
+        "281": "红波"
+      }
+    },
+    {
+      "name": "玄机阁",
+      "url": "https://aqlvuvz.kkr58-ayern-biiohi.xyz:16677/",
+      "pick": "top",
+      "archive_tag": "dup-of:玄机",
+      "duplicate_of": "玄机",
+      "archived_period": 281,
+      "cache_data": {
+        "272": "红波",
+        "273": "蓝波",
+        "274": "绿波",
+        "275": "蓝波",
+        "276": "红波",
+        "277": "绿波",
+        "278": "红波",
+        "279": "蓝波",
+        "280": "绿波",
+        "281": "红波"
+      }
+    },
+    {
+      "name": "红姐论坛",
+      "url": "https://whsbrmz.qclrc-4mk42-vnxbyg.work:16677/topic/466186.html",
+      "pick": "top",
+      "archive_tag": "dup-of:目瞪口呆",
+      "duplicate_of": "目瞪口呆",
+      "archived_period": 281,
+      "cache_data": {
+        "272": "蓝波",
+        "273": "红波",
+        "274": "绿波",
+        "275": "蓝波",
+        "276": "红波",
+        "277": "绿波",
+        "278": "蓝波",
+        "279": "红波",
+        "280": "绿波",
+        "281": "蓝波"
+      }
+    },
+    {
+      "name": "白虎",
+      "url": "https://mkhomxq.gqmpb-vuxji-pfnheu.work:16677/topic/403535.html",
+      "pick": "top",
+      "keyword": "绝杀一波",
+      "archive_tag": "dup-of:鸿运",
+      "duplicate_of": "鸿运",
+      "archived_period": 281,
+      "cache_data": {
+        "272": "绿波",
+        "273": "红波",
+        "274": "红波",
+        "275": "蓝波",
+        "276": "红波",
+        "277": "蓝波",
+        "278": "红波",
+        "279": "蓝波",
+        "280": "红波",
+        "281": "绿波"
+      }
+    },
+{
+      "name": "公式杀",
+      "url": "https://tetinte.nzxzd-cfket-xtgznp.xyz:16677/",
+      "pick": "top",
+      "archive_tag": "node-unreachable",
+      "archive_reason": "节点自 287 期起连续 4 天不可达（ERR_CONNECTION_CLOSED / SSL EOF / ERR_TIMED_OUT，同 :16677 平台对照站正常），用户点名封存，恢复需再次授权",
+      "unreachable_since": 287,
+      "last_success_period": 286,
+      "missing_periods": [
+        287,
+        288,
+        289,
+        290
+      ],
+      "archived_period": 290,
+      "cache_data": {
+        "281": "绿波",
+        "282": "绿波",
+        "283": "蓝波",
+        "284": "绿波",
+        "285": "红波",
+        "286": "蓝波"
+      }
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+== 前态 ==
+  sites.json: size=13639 sha=04d946e20c21ed9b45a7541fcc8b2c1e079cf02f47b0f62c31f5d8ffb32637d3
+  recent_10_cache.json: size=44866 sha=85db3d98d93b3a653215d47f33407a5034a177a44ace5c952f2d6ac7ba5c73dd
+  archived_sites.json: size=6670 sha=165b69558ba246e2e2e2d27ed966c37fd77db1d701b0cdeeab1ef44bafbcf72c
+
+== sites.json 删除块（行 149-153）==
+  {
+    "name": "公式杀",
+    "url": "https://tetinte.nzxzd-cfket-xtgznp.xyz:16677/",
+    "pick": "top"
+  },
+
+
+== 后态 ==
+  sites.json: size=13554 sha=605d40233efb6cba6da98a76cf24381162be5379b1403a7e3c8ab275bba4c7f2
+  recent_10_cache.json: size=44544 sha=247d07f45131c90ce7a91d37e5b5a29e46cf2c7c94d3dafc163dd1e696850ead
+  archived_sites.json: size=7681 sha=607b392413f54c6e44b19a60ac4925a681c0bf88595653aaa257c370b98d5dc8
+  sites.json 站点数: 100 -> 99
+  cache 站点数: 100 -> 99；periods=[290, 289, 288, 287, 286, 285, 284, 283, 282, 281] updated_at=2026-10-17 18:34:58
+  archived_sites.json 条目数: 12 -> 13
+  公式杀 缓存快照: {'281': '绿波', '282': '绿波', '283': '蓝波', '284': '绿波', '285': '红波', '286': '蓝波'}

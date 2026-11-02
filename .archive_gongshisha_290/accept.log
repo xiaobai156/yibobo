@@ -1,0 +1,22 @@
+load_sites -> 99 站；公式杀 在册: False
+单站隔离跑验收（针锋相对）：见 run_check\
+
+桃花没酒 现场复核（pick=top）
+  抓取 OK 1.21s docs=[20, 2163]
+  候选=107 期号区间=[184, 185]…[288, 289] 290候选=[] select=(None, '未找到指定期数')
+    杀肖区 290期: 桃花没酒「绝杀一波」
+    289期：绝杀一波（蓝波）开00准
+    289期：绝杀一波（红波）开蛇38准
+    288期：绝杀一波（蓝波）开马25错
+    287期：绝杀一波（绿波）开猪08准
+    286期：绝杀一波（蓝波）开羊24准
+
+DONE
+Exception in callback SyncBase._sync.<locals>.<lambda>(<Task finishe...> result=None>) at C:\Users\Administrator\AppData\Local\Programs\Python\Python310\lib\site-packages\playwright\_impl\_sync_base.py:111
+handle: <Handle SyncBase._sync.<locals>.<lambda>(<Task finishe...> result=None>) at C:\Users\Administrator\AppData\Local\Programs\Python\Python310\lib\site-packages\playwright\_impl\_sync_base.py:111>
+Traceback (most recent call last):
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python310\lib\asyncio\events.py", line 80, in _run
+    self._context.run(self._callback, *self._args)
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python310\lib\site-packages\playwright\_impl\_sync_base.py", line 111, in <lambda>
+    task.add_done_callback(lambda _: g_self.switch())
+AttributeError: 'NoneType' object has no attribute 'switch'
