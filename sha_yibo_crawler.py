@@ -687,7 +687,20 @@ def collect_qvuuqs_user_documents(site: Site, period: int | None, timeout: int =
             detail = validate_qvuuqs_target_record(detail, period)
             return [str(detail["content"])]
         selected = select_qvuuqs_user_records(records, user_id, keyword, period)
-        return [str(record["content"]) for record in selected]
+        documents: list[str] = []
+        for record in selected:
+            content = str(record["content"])
+            if period is not None and f"{period}期" not in content:
+                record_id = normalize_qvuuqs_id(record.get("id"))
+                if record_id is None:
+                    raise ValueError("目标用户文章缺少记录ID")
+                detail_payload = fetch_qvuuqs_json(page, f"/api/v1/forums/{record_id}")
+                detail, _ = locate_qvuuqs_record(detail_payload, record_id)
+                detail = validate_qvuuqs_reference_record(detail, user_id, record_id, keyword)
+                detail = validate_qvuuqs_target_record(detail, period)
+                content = str(detail["content"])
+            documents.append(content)
+        return documents
 
 
 def collect_bazahei_documents(home_url: str, period: int | None, timeout: int = 20) -> list[str]:
