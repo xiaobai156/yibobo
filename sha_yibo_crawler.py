@@ -1634,6 +1634,70 @@ def extract_youya_xiaoshu_candidates(documents: list[str]) -> list[Candidate]:
     return extract_two_wave_missing_candidates(documents, pattern)
 
 
+SPLIT_CELL_ISSUE_PATTERN = re.compile(r"^(\d{1,4})\s*期$")
+SPLIT_CELL_HEADER_LIMIT = 12
+
+
+def split_cell_wave_value(cell: str) -> str | None:
+    text = cell.translate(TEXT_TRANS).strip().strip("()[]【】 ")
+    if re.fullmatch(r"[红蓝绿]", text):
+        return f"{text}波"
+    return normalize_wave_value(text)
+
+
+def extract_split_cell_table_sha_yibo_candidates(documents: list[str]) -> list[Candidate]:
+    """表格结构与整行版本不同：每个单元格单独占一行，需按表头定位"杀一波"列序号。"""
+    lines = plain_lines(documents)
+    candidates: list[Candidate] = []
+    seen: set[tuple[int, str, str]] = set()
+    total = len(lines)
+    index = 0
+    while index < total:
+        if lines[index].translate(TEXT_TRANS).strip() != "期数":
+            index += 1
+            continue
+        header: list[str] = []
+        cursor = index
+        while cursor < total and len(header) < SPLIT_CELL_HEADER_LIMIT:
+            cell = lines[cursor].translate(TEXT_TRANS).strip()
+            if not cell or SPLIT_CELL_ISSUE_PATTERN.match(cell):
+                break
+            header.append(cell)
+            cursor += 1
+        wave_columns = [position for position, name in enumerate(header) if name == "杀一波"]
+        if len(wave_columns) != 1 or wave_columns[0] == 0:
+            index += 1
+            continue
+        wave_column = wave_columns[0]
+        while cursor < total:
+            row_match = SPLIT_CELL_ISSUE_PATTERN.match(lines[cursor].translate(TEXT_TRANS).strip())
+            if not row_match:
+                break
+            issue = int(row_match.group(1))
+            cells: list[str] = []
+            position = cursor + 1
+            while position < total and len(cells) < len(header) - 1:
+                cell = lines[position].translate(TEXT_TRANS).strip()
+                if not cell or SPLIT_CELL_ISSUE_PATTERN.match(cell) or cell in header:
+                    break
+                cells.append(cell)
+                position += 1
+            if len(cells) < len(header) - 1 or wave_column - 1 >= len(cells):
+                break
+            value = split_cell_wave_value(cells[wave_column - 1])
+            row_line = " ".join([f"{issue}期", *cells])
+            cursor = position
+            if value is None:
+                continue
+            key = (issue, value, row_line)
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append(Candidate(issue, value, row_line, len(candidates)))
+        index = cursor if cursor > index else index + 1
+    return candidates
+
+
 def extract_table_sha_yibo_column_candidates(documents: list[str]) -> list[Candidate]:
     candidates: list[Candidate] = []
     seen: set[tuple[int, str, str]] = set()
@@ -1668,7 +1732,9 @@ def extract_table_sha_yibo_column_candidates(documents: list[str]) -> list[Candi
             continue
         seen.add(key)
         candidates.append(Candidate(issue, value, line, len(candidates)))
-    return candidates
+    if candidates:
+        return candidates
+    return extract_split_cell_table_sha_yibo_candidates(documents)
 
 
 def extract_babu_maoge_candidates(documents: list[str]) -> list[Candidate]:
